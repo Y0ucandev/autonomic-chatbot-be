@@ -1,15 +1,10 @@
 from fastapi import FastAPI, Depends
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from chatbot_app.startup import get_connection_string
+from chatbot_app.startup import CONNECTION_STRING
 from chatbot_app.api.routers.user_router import user_router
 from chatbot_app.api.routers.message_router import message_router
 
-
-CONNECTION_STRING = get_connection_string()
-
-if not CONNECTION_STRING:
-    raise ValueError("CONNECTION_STRING is not set in the environment variables.")
 
 app = FastAPI()
 
