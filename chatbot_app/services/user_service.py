@@ -4,6 +4,10 @@ from typing import Dict
 from fastapi import HTTPException, Request, status
 from datetime import datetime, timedelta, timezone
 from chatbot_app.schemas.users_schema import User
+from chatbot_app.db.models import User as user_model
+from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import NoResultFound
+import bcrypt
 
 
 def create_access_token(data: Dict[str, str], expires_delta: timedelta = None) -> str:
@@ -47,3 +51,24 @@ def create_refresh_token(data: Dict[str, str], expires_delta: timedelta = None) 
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(days=7))
     to_encode.update({"exp": expire, "type": "refresh"})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+
+
+def authenticate_user(db: Session, email: str, password: str) -> User:
+    try:
+        user = db.query(user_model).filter(user_model.email == email).one()
+
+        if not verify_password(password, user.hashed_password):
+            return "incorrect_password"
+
+        return user
+
+    except NoResultFound:
+        return "email_not_found"
