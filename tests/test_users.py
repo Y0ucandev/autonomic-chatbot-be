@@ -18,7 +18,9 @@ from chatbot_app.schemas.users_schema import UserCreate
 @pytest.fixture(scope="module")
 def test_db():
     SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-    engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    )
 
     Base.metadata.create_all(bind=engine)
 
@@ -39,8 +41,7 @@ def client(test_db):
 
     app.dependency_overrides[get_db] = override_get_db
 
-    client = TestClient(app)
-    return client
+    return TestClient(app)
 
 
 def test_get_token(client):
@@ -77,7 +78,8 @@ def test_protected_route_with_invalid_token(client):
 def test_protected_route_with_expired_token(mock_create_token, client):
 
     mock_create_token.return_value = create_access_token(
-        {"email": "test@example.com", "role": "user"}, expires_delta=timedelta(seconds=1)
+        {"email": "test@example.com", "role": "user"},
+        expires_delta=timedelta(seconds=1),
     )
 
     token_response = client.post("/users/auth")
@@ -107,9 +109,20 @@ def test_refresh_with_expired_token(client):
 
 def create_test_user(db):
     clear_users(db)
-    user_in = UserCreate(sub="testuser@example.com", email="testuser@example.com", password="secret", role="user")
+    user_in = UserCreate(
+        sub="testuser@example.com",
+        email="testuser@example.com",
+        password="secret",
+        role="user",
+    )
 
-    db_user = create_user(db, sub=user_in.sub, email=user_in.email, password=user_in.password, role=user_in.role)
+    db_user = create_user(
+        db,
+        sub=user_in.sub,
+        email=user_in.email,
+        password=user_in.password,
+        role=user_in.role,
+    )
 
     return db_user
 
@@ -131,8 +144,8 @@ def test_login_wrong_email(client, test_db):
         "/users/login", json={"email": "wronguser@example.com", "password": "secret"}
     )
 
-    assert response.status_code == 401
-    assert response.json() == {"detail": "Email not found"}
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User with this email nor found"}
 
 
 def test_login_wrong_password(client, test_db):
@@ -145,3 +158,30 @@ def test_login_wrong_password(client, test_db):
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Incorrect password"}
+
+
+@patch("chatbot_app.api.routers.user_router.create_access_token")
+def test_login_with_expired_token(mock_create_token, client, test_db):
+    create_test_user(test_db)
+
+    mock_create_token.return_value = create_access_token(
+        {"email": "test@example.com", "role": "user"},
+        expires_delta=timedelta(seconds=1),
+    )
+
+    token_response = client.post(
+        "/users/login",
+        json={"email": "testuser@example.com", "password": "secret"}
+    )
+    assert token_response.status_code == 200
+    token = token_response.json()["access_token"]
+
+    time.sleep(3)
+
+    response = client.get(
+        "/users/protected",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"].lower() in ["token expired", "could not validate credentials"]

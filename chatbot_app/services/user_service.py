@@ -58,7 +58,9 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    return bcrypt.checkpw(
+        plain_password.encode("utf-8"), hashed_password.encode("utf-8")
+    )
 
 
 def authenticate_user(db: Session, email: str, password: str) -> User:
@@ -66,9 +68,14 @@ def authenticate_user(db: Session, email: str, password: str) -> User:
         user = db.query(user_model).filter(user_model.email == email).one()
 
         if not verify_password(password, user.hashed_password):
-            return "incorrect_password"
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect password"
+            )
 
         return user
 
     except NoResultFound:
-        return "email_not_found"
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User with this email nor found",
+        )

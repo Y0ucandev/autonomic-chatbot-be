@@ -3,7 +3,11 @@ import jwt
 from chatbot_app.startup import SECRET_KEY, ALGORITHM
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from typing import Dict
-from chatbot_app.services.user_service import create_access_token, get_current_user, authenticate_user
+from chatbot_app.services.user_service import (
+    create_access_token,
+    get_current_user,
+    authenticate_user,
+)
 from chatbot_app.schemas.users_schema import Token, User, LoginRequest
 from sqlalchemy.orm import Session
 from chatbot_app.db.database import SessionLocal
@@ -69,10 +73,7 @@ def refresh_token(request: Request) -> Token:
 def login(login_request: LoginRequest, db: Session = Depends(get_db)) -> Token:
     auth_result = authenticate_user(db, login_request.email, login_request.password)
 
-    if auth_result == "email_not_found":
-        raise HTTPException(status_code=401, detail="Email not found")
-    if auth_result == "incorrect_password":
-        raise HTTPException(status_code=401, detail="Incorrect password")
-
-    access_token = create_access_token(data={"sub": auth_result.email, "role": auth_result.role})
+    access_token = create_access_token(
+        data={"sub": auth_result.email, "role": auth_result.role}
+    )
     return {"access_token": access_token, "token_type": "bearer", "status": "success"}
