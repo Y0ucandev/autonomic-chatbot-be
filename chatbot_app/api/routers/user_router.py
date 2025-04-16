@@ -3,15 +3,29 @@ import jwt
 from chatbot_app.startup import SECRET_KEY, ALGORITHM
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from typing import Dict
-from chatbot_app.services.user_service import create_access_token, get_current_user
-from chatbot_app.schemas.users_schema import Token, User
+from chatbot_app.services.user_service import (
+    create_access_token,
+    get_current_user,
+    authenticate_user,
+)
+from chatbot_app.schemas.users_schema import Token, User, LoginRequest
+from sqlalchemy.orm import Session
+from chatbot_app.db.database import SessionLocal
 
 user_router = APIRouter()
 
 
+def get_db() -> Session:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 @user_router.post("/auth")
 def get_token() -> Token:
-    user_data = {"sub": "test@example.com", "role": "user"}
+    user_data = {"sub": "test@example.com", "email": "test@example.com", "role": "user"}
     token = create_access_token(user_data)
     return {"access_token": token, "token_type": "bearer"}
 
@@ -53,3 +67,13 @@ def refresh_token(request: Request) -> Token:
     new_access_token = create_access_token(user_data)
 
     return {"access_token": new_access_token, "token_type": "bearer"}
+
+
+@user_router.post("/login")
+def login(login_request: LoginRequest, db: Session = Depends(get_db)) -> Token:
+    auth_result = authenticate_user(db, login_request.email, login_request.password)
+
+    access_token = create_access_token(
+        data={"sub": auth_result.email, "role": auth_result.role}
+    )
+    return {"access_token": access_token, "token_type": "bearer", "status": "success"}
