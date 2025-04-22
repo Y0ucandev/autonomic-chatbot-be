@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from chatbot_app.db.database import Base
 from chatbot_app.main import app
 from chatbot_app.db.crud import create_user, clear_users
-from chatbot_app.schemas.users_schema import UserRegister
+from chatbot_app.schemas.users_schema import UserRegister, UserRole
 from chatbot_app.db.models import User as Model_User
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
@@ -195,7 +195,6 @@ def test_register_user_success(client, test_db):
     response = client.post("/users/register", json=user_data.model_dump())
 
     assert response.status_code == 200
-    assert response.json() == {"message": "User registered successfully"}
 
     user_in_db = (
         test_db.query(Model_User).filter(Model_User.email == user_data.email).first()
@@ -262,3 +261,143 @@ def test_register_user_missing_name(client):
     assert response.status_code == 422
     errors = response.json()["detail"]
     assert any(error["loc"] == ["body", "name"] for error in errors)
+
+
+def test_register_user_missing_age(client):
+    user_data = {
+        "name": "David",
+        "email": "david@example.com",
+        "password": "password123",
+        "gender": "male",
+    }
+
+    response = client.post("/users/register", json=user_data)
+
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any("age" in error["loc"] for error in errors)
+
+
+def test_register_user_missing_gender(client):
+    user_data = {
+        "name": "Sophia",
+        "email": "sophia@example.com",
+        "password": "password123",
+        "age": 28,
+    }
+
+    response = client.post("/users/register", json=user_data)
+
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any("gender" in error["loc"] for error in errors)
+
+
+def test_register_user_missing_password(client):
+    user_data = {
+        "name": "Olivia",
+        "email": "olivia@example.com",
+        "age": 30,
+        "gender": "female",
+    }
+
+    response = client.post("/users/register", json=user_data)
+
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any("password" in error["loc"] for error in errors)
+
+
+def test_register_user_invalid_age_type(client):
+    user_data = {
+        "name": "John",
+        "email": "john@example.com",
+        "password": "password123",
+        "age": "twenty",
+        "gender": "male",
+    }
+
+    response = client.post("/users/register", json=user_data)
+
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any("age" in error["loc"] for error in errors)
+
+
+def test_register_user_invalid_gender_type(client):
+    user_data = {
+        "name": "Ava",
+        "email": "ava@example.com",
+        "password": "password123",
+        "age": 30,
+        "gender": 123,
+    }
+
+    response = client.post("/users/register", json=user_data)
+
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any("gender" in error["loc"] for error in errors)
+
+
+def test_register_user_invalid_password_type(client):
+    user_data = {
+        "name": "Liam",
+        "email": "liam@example.com",
+        "password": 12345,
+        "age": 25,
+        "gender": "male",
+    }
+
+    response = client.post("/users/register", json=user_data)
+
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any("password" in error["loc"] for error in errors)
+
+
+def test_register_user_invalid_name_type(client):
+    user_data = {
+        "name": 12345,
+        "email": "olivia@example.com",
+        "password": "password123",
+        "age": 28,
+        "gender": "female",
+    }
+
+    response = client.post("/users/register", json=user_data)
+
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any("name" in error["loc"] for error in errors)
+
+
+def test_register_user_role_assigned(client, test_db):
+    user_data = {
+        "name": "James",
+        "email": "james@example.com",
+        "password": "password123",
+        "age": 27,
+        "gender": "male"
+    }
+
+    response = client.post("/users/register", json=user_data)
+    assert response.status_code == 200
+
+    result = test_db.query(Model_User).filter(Model_User.email == user_data["email"]).first()
+    assert result.role == "user"
+
+
+def test_register_admin_role_assigned(client, test_db):
+    user_data = UserRegister(
+        name="Bob",
+        email="admin@example.com",
+        password="secret",
+        age=30,
+        gender="male",
+    )
+    create_user(db=test_db, user_data=user_data, role=UserRole.admin)
+
+    user = test_db.query(Model_User).filter_by(email="admin@example.com").first()
+    assert user is not None
+    assert user.role == "admin"

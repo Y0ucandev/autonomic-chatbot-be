@@ -23,6 +23,11 @@ class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class UserRole(str, Enum):
+    user = "user"
+    admin = "admin"
+
+
 class SexEnum(str, Enum):
     male = "male"
     female = "female"

@@ -1,11 +1,13 @@
 from sqlalchemy.orm import Session
 from chatbot_app.db.models import User as Model_User
-from chatbot_app.schemas.users_schema import UserRegister
+from chatbot_app.schemas.users_schema import UserRegister, UserRole
 from chatbot_app.services.user_service import hash_password
 from uuid import uuid4
+from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException
 
 
-def create_user(db: Session, user_data: UserRegister, role: str) -> Model_User:
+def create_user(db: Session, user_data: UserRegister, role: UserRole) -> Model_User:
     hashed_password = hash_password(user_data.password)
     db_user = Model_User(
         sub=str(uuid4()),
@@ -17,7 +19,14 @@ def create_user(db: Session, user_data: UserRegister, role: str) -> Model_User:
         gender=user_data.gender,
     )
     db.add(db_user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Registration failed. The email may already be in use or the data is invalid.",
+        )
     db.refresh(db_user)
     return db_user
 
