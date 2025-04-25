@@ -1,5 +1,6 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import Optional
+from enum import Enum
 
 
 class Token(BaseModel):
@@ -16,16 +17,27 @@ class User(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class UserCreate(User):
-    password: str
-
-
-class UserResponse(User):
-    status: str
-    model_config = ConfigDict(from_attributes=True)
-
-
 class LoginRequest(BaseModel):
     email: str
     password: str
+    model_config = ConfigDict(extra="forbid")
+
+
+class UserRole(str, Enum):
+    user = "user"
+    admin = "admin"
+
+
+class SexEnum(str, Enum):
+    male = "male"
+    female = "female"
+    other = "other"
+
+
+class UserRegister(BaseModel):
+    name: str = Field(..., min_length=1)
+    email: EmailStr
+    password: str
+    age: int
+    gender: SexEnum
     model_config = ConfigDict(extra="forbid")

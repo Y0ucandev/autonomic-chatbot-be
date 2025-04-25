@@ -77,5 +77,5 @@ def authenticate_user(db: Session, email: str, password: str) -> User:
     except NoResultFound:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User with this email nor found",
+            detail="User with this email not found",
         )

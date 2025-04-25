@@ -2,15 +2,24 @@ import jwt
 
 from chatbot_app.startup import SECRET_KEY, ALGORITHM
 from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi.responses import Response
 from typing import Dict
 from chatbot_app.services.user_service import (
     create_access_token,
     get_current_user,
     authenticate_user,
 )
-from chatbot_app.schemas.users_schema import Token, User, LoginRequest
+from chatbot_app.schemas.users_schema import (
+    Token,
+    User,
+    LoginRequest,
+    UserRegister,
+    UserRole,
+)
 from sqlalchemy.orm import Session
 from chatbot_app.db.database import SessionLocal
+from chatbot_app.db.crud import create_user
+from chatbot_app.db.models import User as Model_User
 
 user_router = APIRouter()
 
@@ -77,3 +86,15 @@ def login(login_request: LoginRequest, db: Session = Depends(get_db)) -> Token:
         data={"sub": auth_result.email, "role": auth_result.role}
     )
     return {"access_token": access_token, "token_type": "bearer", "status": "success"}
+
+
+@user_router.post("/register")
+def register(user_create: UserRegister, db: Session = Depends(get_db)) -> Response:
+    if db.query(Model_User).filter(Model_User.email == user_create.email).first():
+        raise HTTPException(
+            status_code=400, detail="An account with this email already exists"
+        )
+
+    create_user(db=db, user_data=user_create, role=UserRole.user)
+
+    return Response(status_code=200)
