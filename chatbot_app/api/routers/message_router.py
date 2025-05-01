@@ -19,7 +19,7 @@ async def connect_client():
 
 @message_router.get("/history", response_model=MessageHistoryResponse)
 async def get_message_history(
-    chat: str = Query(default="me"),
+    user_id: int = Query(...),
     limit: int = Query(default=20, ge=1, le=100),
     offset_id: int = Query(default=0),
 ):
@@ -29,8 +29,10 @@ async def get_message_history(
     next_offset_id = None
 
     try:
+        entity = await client.get_entity(user_id)
+
         async for msg in client.iter_messages(
-            entity=chat, limit=limit, offset_id=offset_id
+            entity=entity, limit=limit, offset_id=offset_id
         ):
             if msg.message:
                 message = TelegramMessage(

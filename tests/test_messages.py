@@ -24,11 +24,13 @@ async def test_get_history_success():
         "chatbot_app.api.routers.message_router.client.is_connected", return_value=True
     ), patch(
         "chatbot_app.api.routers.message_router.client.connect", new_callable=AsyncMock
+    ), patch(
+        "chatbot_app.api.routers.message_router.client.get_entity", new_callable=AsyncMock
     ):
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            response = await ac.get("/message/history?limit=1")
+            response = await ac.get("/message/history?user_id=123456&limit=1")
 
         assert response.status_code == 200
         data = response.json()
@@ -51,7 +53,7 @@ async def test_get_history_connection_fail():
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            response = await ac.get("/message/history?limit=1")
+            response = await ac.get("/message/history?user_id=123456&limit=1")
 
         assert response.status_code == 500
         assert "Failed to connect to Telegram" in response.text
@@ -70,11 +72,13 @@ async def test_get_history_exception_during_fetch():
         "chatbot_app.api.routers.message_router.client.is_connected", return_value=True
     ), patch(
         "chatbot_app.api.routers.message_router.client.connect", new_callable=AsyncMock
+    ), patch(
+        "chatbot_app.api.routers.message_router.client.get_entity", new_callable=AsyncMock
     ):
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            response = await ac.get("/message/history?limit=1")
+            response = await ac.get("/message/history?user_id=123456&limit=1")
 
         assert response.status_code == 500
         assert "An error occurred while retrieving messages" in response.text
