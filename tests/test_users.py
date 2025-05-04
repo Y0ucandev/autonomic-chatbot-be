@@ -378,13 +378,15 @@ def test_register_user_role_assigned(client, test_db):
         "email": "james@example.com",
         "password": "password123",
         "age": 27,
-        "gender": "male"
+        "gender": "male",
     }
 
     response = client.post("/users/register", json=user_data)
     assert response.status_code == 200
 
-    result = test_db.query(Model_User).filter(Model_User.email == user_data["email"]).first()
+    result = (
+        test_db.query(Model_User).filter(Model_User.email == user_data["email"]).first()
+    )
     assert result.role == "user"
 
 
