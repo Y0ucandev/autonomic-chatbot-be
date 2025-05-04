@@ -1,20 +1,22 @@
 import logging
+import asyncio
 from fastapi import APIRouter, Query, HTTPException
 from chatbot_app.schemas.message_schema import TelegramMessage, MessageHistoryResponse
 from chatbot_app.startup import client
 
 message_router = APIRouter()
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
-)
+
 logger = logging.getLogger(__name__)
 
 
-async def connect_client():
-    if not client.is_connected():
+async def connect_client(retries=3, delay=1):
+    for _ in range(retries):
+        if client.is_connected():
+            return
         await client.connect()
-        if not client.is_connected():
-            raise HTTPException(status_code=500, detail="Failed to connect to Telegram")
+        await asyncio.sleep(delay)
+    if not client.is_connected():
+        raise HTTPException(status_code=500, detail="Failed to connect to Telegram")
 
 
 @message_router.get("/history", response_model=MessageHistoryResponse)
@@ -26,7 +28,6 @@ async def get_message_history(
     await connect_client()
 
     messages = []
-    next_offset_id = None
 
     try:
         entity = await client.get_entity(user_id)
@@ -43,11 +44,10 @@ async def get_message_history(
                     date=msg.date,
                 )
                 messages.append(message.model_dump())
-        if messages:
-            next_offset_id = messages[-1]["id"]
+        next_offset_id = messages[-1]["id"] if messages else offset_id
 
-    except Exception as e:
-        logger.error(f"Error while fetching messages: {e}")
+    except Exception:
+        logger.error("Error while fetching messages", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="An error occurred while retrieving messages from Telegram",

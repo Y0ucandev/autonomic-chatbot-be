@@ -25,7 +25,8 @@ async def test_get_history_success():
     ), patch(
         "chatbot_app.api.routers.message_router.client.connect", new_callable=AsyncMock
     ), patch(
-        "chatbot_app.api.routers.message_router.client.get_entity", new_callable=AsyncMock
+        "chatbot_app.api.routers.message_router.client.get_entity",
+        new_callable=AsyncMock,
     ):
 
         transport = ASGITransport(app=app)
@@ -46,7 +47,7 @@ async def test_get_history_success():
 async def test_get_history_connection_fail():
     with patch(
         "chatbot_app.api.routers.message_router.client.is_connected",
-        side_effect=[False, False],
+        side_effect=[False, False, False, False],
     ), patch(
         "chatbot_app.api.routers.message_router.client.connect", new_callable=AsyncMock
     ):
@@ -73,7 +74,8 @@ async def test_get_history_exception_during_fetch():
     ), patch(
         "chatbot_app.api.routers.message_router.client.connect", new_callable=AsyncMock
     ), patch(
-        "chatbot_app.api.routers.message_router.client.get_entity", new_callable=AsyncMock
+        "chatbot_app.api.routers.message_router.client.get_entity",
+        new_callable=AsyncMock,
     ):
 
         transport = ASGITransport(app=app)
