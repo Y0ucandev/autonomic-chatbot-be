@@ -3,6 +3,8 @@ import logging
 from telethon import events
 from chatbot_app.schemas.message_schema import TelegramMessage
 from chatbot_app.startup import client
+from chatbot_app.services.message_service import generate_ai_response
+
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -22,6 +24,12 @@ async def handle_new_message(event):
     )
 
     logger.info("New message:\n%s", message.model_dump_json(indent=2))
+
+    sender = event.sender_id
+    me = await client.get_me()
+    response = await generate_ai_response(message.chat_id, me.id)
+
+    await client.send_message(sender, response)
 
 
 async def main():

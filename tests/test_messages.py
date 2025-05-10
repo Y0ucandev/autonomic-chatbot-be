@@ -18,14 +18,14 @@ async def test_get_history_success():
         yield mock_message
 
     with patch(
-        "chatbot_app.api.routers.message_router.client.iter_messages",
+        "chatbot_app.services.message_service.client.iter_messages",
         new=fake_iter_messages,
     ), patch(
-        "chatbot_app.api.routers.message_router.client.is_connected", return_value=True
+        "chatbot_app.services.message_service.client.is_connected", return_value=True
     ), patch(
-        "chatbot_app.api.routers.message_router.client.connect", new_callable=AsyncMock
+        "chatbot_app.services.message_service.client.connect", new_callable=AsyncMock
     ), patch(
-        "chatbot_app.api.routers.message_router.client.get_entity",
+        "chatbot_app.services.message_service.client.get_entity",
         new_callable=AsyncMock,
     ):
 
@@ -46,10 +46,10 @@ async def test_get_history_success():
 @pytest.mark.asyncio
 async def test_get_history_connection_fail():
     with patch(
-        "chatbot_app.api.routers.message_router.client.is_connected",
+        "chatbot_app.services.message_service.client.is_connected",
         side_effect=[False, False, False, False],
     ), patch(
-        "chatbot_app.api.routers.message_router.client.connect", new_callable=AsyncMock
+        "chatbot_app.services.message_service.client.connect", new_callable=AsyncMock
     ):
 
         transport = ASGITransport(app=app)
@@ -67,14 +67,14 @@ async def test_get_history_exception_during_fetch():
         yield
 
     with patch(
-        "chatbot_app.api.routers.message_router.client.iter_messages",
+        "chatbot_app.services.message_service.client.iter_messages",
         new=fake_iter_messages,
     ), patch(
-        "chatbot_app.api.routers.message_router.client.is_connected", return_value=True
+        "chatbot_app.services.message_service.client.is_connected", return_value=True
     ), patch(
-        "chatbot_app.api.routers.message_router.client.connect", new_callable=AsyncMock
+        "chatbot_app.services.message_service.client.connect", new_callable=AsyncMock
     ), patch(
-        "chatbot_app.api.routers.message_router.client.get_entity",
+        "chatbot_app.services.message_service.client.get_entity",
         new_callable=AsyncMock,
     ):
 
