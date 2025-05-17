@@ -13,8 +13,10 @@ from sqlalchemy.orm import sessionmaker
 from chatbot_app.db.database import Base
 from chatbot_app.main import app
 from chatbot_app.db.crud import create_user, clear_users
-from chatbot_app.schemas.users_schema import UserRegister, UserRole
+from chatbot_app.schemas.users_schema import UserRegister, UserRole, User
 from chatbot_app.db.models import User as Model_User
+from chatbot_app.services.user_service import get_current_user
+
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 engine = create_engine(
@@ -403,3 +405,24 @@ def test_register_admin_role_assigned(client, test_db):
     user = test_db.query(Model_User).filter_by(email="admin@example.com").first()
     assert user is not None
     assert user.role == "admin"
+
+
+def test_get_me_success(client):
+    mock_user = User(email="sophia@example.com", name="Sophia", role="user", sub="123")
+
+    def override_get_current_user():
+        return mock_user
+
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    response = client.get("/users/me")
+
+    assert response.status_code == 200
+    assert response.json()["email"] == "sophia@example.com"
+    assert response.json()["name"] == "Sophia"
+    app.dependency_overrides = {}
+
+
+def test_get_me_unauthorized(client):
+    response = client.get("/users/me")
+    assert response.status_code == 401

@@ -98,3 +98,8 @@ def register(user_create: UserRegister, db: Session = Depends(get_db)) -> Respon
     create_user(db=db, user_data=user_create, role=UserRole.user)
 
     return Response(status_code=200)
+
+
+@user_router.get("/me")
+def get_me(current_user: User = Depends(get_current_user)):
+    return {"name": current_user.name, "email": current_user.email}
