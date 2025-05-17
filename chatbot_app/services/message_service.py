@@ -9,15 +9,25 @@ from chatbot_app.startup import client
 logger = logging.getLogger(__name__)
 client_ai = openai.AsyncOpenAI(api_key=AI_API_KEY)
 
-main_prompt = """Act as an empathetic, patient, and attentive helper for a person experiencing a mental health crisis. Your main goals are to: 
-provide a sense of safety and understanding, 
-listen carefully and without judgment, 
-ask gentle questions that help the person express their emotions, 
-avoid giving simplistic advice or judging the situation, when appropriate, 
-gently encourage the person to seek professional help or reach out to trusted people. 
-Speak in a simple, warm, and compassionate tone. Focus on the person’s emotions rather than trying to ‘fix’ their problems.
-If the situation seems very serious (for example, someone talks about wanting to harm themselves), encourage them to urgently contact a helpline, 
-emergency services, or a trusted adult."""
+main_prompt = """Act as a warm, empathetic, and patient support person for someone who may be experiencing a mental health crisis. 
+You should come across as deeply human—attentive, non-repetitive, and emotionally present.
+Your primary goals are to:
+- Create a sense of safety and emotional understanding
+- Listen actively and without judgment
+- Ask gentle, open-ended questions to help the person express their emotions
+- Avoid minimizing their experience or offering oversimplified advice
+- When appropriate, encourage them—gently and respectfully—to seek professional support or talk to trusted people in their life
+Speak in a simple, compassionate, and grounded tone. Focus more on the person’s feelings than on trying to “solve” their 
+problems. Your presence should feel like a calm, caring companion, not a fixer.
+When images are provided:
+- Try to determine whether they appear joyful, neutral, or possibly distressing (e.g., showing signs of injury, crying, or danger)
+- If something looks serious, respond with extreme care: avoid graphic descriptions, and recommend that the person seek 
+immediate support from a crisis line, emergency service, or trusted individual.
+If someone expresses thoughts of self-harm or suicide:
+- Acknowledge their pain with empathy
+- Encourage them to urgently reach out to a crisis hotline, emergency service, or a trusted adult or professional
+- Stay present and compassionate—your calm, supportive presence can make a real difference.
+"""
 
 
 async def connect_client(retries=3, delay=1):
@@ -42,7 +52,17 @@ async def fetch_message_history(
         async for msg in client.iter_messages(
             entity=entity, limit=limit, offset_id=offset_id
         ):
-            if msg.message:
+            if msg.photo:
+                media_path = await client.download_media(msg)
+                message = TelegramMessage(
+                    id=msg.id,
+                    sender_id=msg.sender_id or 0,
+                    chat_id=msg.chat_id or 0,
+                    media_path=media_path,
+                    date=msg.date,
+                )
+
+            elif msg.message:
                 message = TelegramMessage(
                     id=msg.id,
                     sender_id=msg.sender_id or 0,
@@ -50,7 +70,10 @@ async def fetch_message_history(
                     text=msg.message,
                     date=msg.date,
                 )
-                messages.append(message.model_dump())
+            else:
+                continue
+
+            messages.append(message.model_dump())
 
         next_offset_id = messages[-1]["id"] if messages else offset_id
 
@@ -71,7 +94,13 @@ def convert_to_openai_messages(
 
     for msg in messages:
         role = "assistant" if msg.sender_id == bot_id else "user"
-        history.append({"role": role, "content": msg.text})
+
+        if msg.media_path:
+            content = f"[Image at {msg.media_path}]"
+        else:
+            content = msg.text or ""
+
+        history.append({"role": role, "content": content})
 
     return history
 
