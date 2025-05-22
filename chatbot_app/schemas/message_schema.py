@@ -7,7 +7,8 @@ class TelegramMessage(BaseModel):
     id: int
     sender_id: int
     chat_id: int
-    text: str
+    text: Optional[str] = None
+    media_path: Optional[str] = None
     date: datetime
 
 
