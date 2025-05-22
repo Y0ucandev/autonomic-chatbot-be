@@ -14,6 +14,7 @@ class User(BaseModel):
     sub: str
     email: str
     role: str
+    name: Optional[str] = None
     model_config = ConfigDict(extra="forbid")
 
 
