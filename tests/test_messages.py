@@ -13,6 +13,7 @@ async def test_get_history_success():
     mock_message.sender_id = 123456
     mock_message.chat_id = 654321
     mock_message.date = datetime.now(timezone.utc)
+    mock_message.photo = None
 
     async def fake_iter_messages(*args, **kwargs):
         yield mock_message
