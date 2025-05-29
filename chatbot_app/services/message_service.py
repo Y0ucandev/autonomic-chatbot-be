@@ -1,10 +1,12 @@
 import openai
+import uuid
 from chatbot_app.startup import AI_API_KEY
 import logging
 import asyncio
 from fastapi import HTTPException
 from chatbot_app.schemas.message_schema import TelegramMessage, MessageHistoryResponse
 from chatbot_app.startup import client
+from telethon.tl.functions.channels import CreateChannelRequest
 
 logger = logging.getLogger(__name__)
 client_ai = openai.AsyncOpenAI(api_key=AI_API_KEY)
@@ -118,3 +120,14 @@ async def generate_ai_response(
         model="gpt-4-turbo", messages=openai_messages
     )
     return response.choices[0].message.content.strip()
+
+
+async def create_private_channel(title: str, about: str = ""):
+    result = await client(
+        CreateChannelRequest(title=title, about=about, megagroup=False)
+    )
+    return result.chats[0]
+
+
+def generate_anon_id():
+    return str(uuid.uuid4())

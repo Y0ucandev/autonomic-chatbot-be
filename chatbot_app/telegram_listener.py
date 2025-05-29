@@ -3,13 +3,19 @@ import logging
 from telethon import events
 from chatbot_app.schemas.message_schema import TelegramMessage
 from chatbot_app.startup import client
-from chatbot_app.services.message_service import generate_ai_response
+from chatbot_app.services.message_service import (
+    generate_ai_response,
+    create_private_channel,
+    generate_anon_id,
+)
 
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+anon_channels = {}
 
 
 @client.on(events.NewMessage)
@@ -27,9 +33,23 @@ async def handle_new_message(event):
 
     sender = event.sender_id
     me = await client.get_me()
-    response = await generate_ai_response(message.chat_id, me.id)
 
-    await client.send_message(sender, response)
+    if sender:
+        response = await generate_ai_response(message.chat_id, me.id)
+
+        await client.send_message(sender, response)
+    else:
+        anon_id = generate_anon_id()
+        channel = await create_private_channel(
+            f"AnonUser-{anon_id}", "Channel for anonymous user"
+        )
+        anon_channels[anon_id] = channel.id
+        logger.info(f"Channel created {channel.id} for anonymous user {anon_id}")
+
+        await client.send_message(channel.id, f"Anonymous user: {msg.message}")
+        response = await generate_ai_response(channel.id, me.id)
+
+        await client.send_message(channel.id, response)
 
 
 async def main():
