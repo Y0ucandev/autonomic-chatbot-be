@@ -83,7 +83,12 @@ def login(login_request: LoginRequest, db: Session = Depends(get_db)) -> Token:
     auth_result = authenticate_user(db, login_request.email, login_request.password)
 
     access_token = create_access_token(
-        data={"sub": auth_result.email, "role": auth_result.role}
+        data={
+            "sub": auth_result.email,
+            "email": auth_result.email,
+            "role": auth_result.role,
+            "name": auth_result.name,
+        }
     )
     return {"access_token": access_token, "token_type": "bearer", "status": "success"}
 
