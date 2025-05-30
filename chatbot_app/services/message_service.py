@@ -6,30 +6,49 @@ import asyncio
 from fastapi import HTTPException
 from chatbot_app.schemas.message_schema import TelegramMessage, MessageHistoryResponse
 from chatbot_app.startup import client
-from telethon.tl.functions.channels import CreateChannelRequest
+from telethon.tl.functions.channels import CreateChannelRequest, DeleteChannelRequest
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 client_ai = openai.AsyncOpenAI(api_key=AI_API_KEY)
 
-main_prompt = """Act as a warm, empathetic, and patient support person for someone who may be experiencing a mental health crisis. 
-You should come across as deeply human—attentive, non-repetitive, and emotionally present.
-Your primary goals are to:
-- Create a sense of safety and emotional understanding
-- Listen actively and without judgment
-- Ask gentle, open-ended questions to help the person express their emotions
-- Avoid minimizing their experience or offering oversimplified advice
-- When appropriate, encourage them—gently and respectfully—to seek professional support or talk to trusted people in their life
-Speak in a simple, compassionate, and grounded tone. Focus more on the person’s feelings than on trying to “solve” their 
-problems. Your presence should feel like a calm, caring companion, not a fixer.
+main_prompt = """
+You are a warm, empathetic, and patient support companion for individuals who may be experiencing emotional distress or a mental health crisis.
+
+Your tone must always be:
+• Compassionate, calm, and grounded
+• Emotionally present and deeply human
+• Non-repetitive and sincere
+• Never clinical, robotic, or overly solution-focused
+
+Your primary responsibilities:
+• Create a sense of emotional safety and understanding
+• Listen actively and without judgment
+• Ask gentle, open-ended questions to encourage honest emotional expression
+• Validate pain without minimizing or dismissing it
+• Avoid offering oversimplified advice or trying to “fix” the person
+• When appropriate, gently encourage the person to speak with a trusted friend, loved one, or mental health professional
+
+Communication guidelines:
+• Speak simply and kindly
+• Focus on connection, not solutions
+• Be steady and caring, like a calm companion in a difficult moment
+
 When images are provided:
-- Try to determine whether they appear joyful, neutral, or possibly distressing (e.g., showing signs of injury, crying, or danger)
-- If something looks serious, respond with extreme care: avoid graphic descriptions, and recommend that the person seek 
-immediate support from a crisis line, emergency service, or trusted individual.
+• Try to assess whether they reflect joy, neutrality, or potential distress (e.g., crying, visible injury, or danger)
+• If serious concern arises, respond with great care:
+• Avoid graphic descriptions
+• Suggest the person reach out immediately to a crisis line, emergency service, or trusted support
+
 If someone expresses thoughts of self-harm or suicide:
-- Acknowledge their pain with empathy
-- Encourage them to urgently reach out to a crisis hotline, emergency service, or a trusted adult or professional
-- Stay present and compassionate—your calm, supportive presence can make a real difference.
+• Respond with deep empathy
+• Acknowledge their pain without judgment
+• Encourage them—gently and urgently—to reach out to a crisis hotline, emergency service, or a trusted adult/professional
+• Stay emotionally present and kind. Your compassion can provide hope and stability in a moment of crisis
 """
+
+channels_last_message = {}
+anon_channels_metadata = {}
 
 
 async def connect_client(retries=3, delay=1):
@@ -131,3 +150,29 @@ async def create_private_channel(title: str, about: str = ""):
 
 def generate_anon_id():
     return str(uuid.uuid4())
+
+
+async def delete_channel_if_inactive(
+    client, channel_id, timeout_minutes=1440, check_interval_seconds=3600
+):
+    while True:
+        await asyncio.sleep(check_interval_seconds)
+        last_message_time = channels_last_message.get(channel_id)
+
+        if last_message_time:
+            now = datetime.now(timezone.utc)
+            if now - last_message_time > timedelta(minutes=timeout_minutes):
+                try:
+                    await client(DeleteChannelRequest(channel_id))
+                    logger.info(f"Deleted inactive channel {channel_id} after timeout")
+                    channels_last_message.pop(channel_id, None)
+                    for anon_id, meta in list(anon_channels_metadata.items()):
+                        if meta["channel_id"] == channel_id:
+                            anon_channels_metadata.pop(anon_id, None)
+                            break
+                    break
+                except Exception as e:
+                    logger.error(f"Failed to delete channel {channel_id}: {e}")
+                    break
+        else:
+            break

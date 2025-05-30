@@ -1,12 +1,17 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from httpx import AsyncClient, ASGITransport
 from chatbot_app.main import app
-from chatbot_app.services.message_service import create_private_channel
 from chatbot_app.telegram_listener import handle_new_message
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
+from chatbot_app.services.message_service import (
+    create_private_channel,
+    delete_channel_if_inactive,
+    channels_last_message,
+    anon_channels_metadata,
+)
 
 
 class FakeAsyncIterator(AsyncIterator):
@@ -187,3 +192,30 @@ async def test_handle_new_message_creates_anon_channel_and_replies():
             mock_channel.id, "Anonymous user: Hello from anon"
         )
         mock_send_message.assert_any_call(mock_channel.id, "AI reply")
+
+
+@pytest.mark.asyncio
+async def test_delete_channel_if_inactive_deletes_after_timeout():
+    mock_client = AsyncMock()
+    channel_id = 12345
+
+    channels_last_message[channel_id] = datetime.now(timezone.utc) - timedelta(
+        minutes=2
+    )
+    anon_channels_metadata["anon123"] = {
+        "channel_id": channel_id,
+        "last_active": datetime.now(timezone.utc) - timedelta(minutes=2),
+    }
+
+    with patch(
+        "chatbot_app.services.message_service.DeleteChannelRequest"
+    ) as mock_delete_req:
+        mock_delete_req.return_value = f"delete-{channel_id}"
+
+        await delete_channel_if_inactive(
+            mock_client, channel_id, timeout_minutes=1, check_interval_seconds=0.1
+        )
+
+        mock_client.assert_awaited_with(mock_delete_req(channel_id))
+        assert channel_id not in channels_last_message
+        assert "anon123" not in anon_channels_metadata
