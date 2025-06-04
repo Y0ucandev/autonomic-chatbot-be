@@ -15,3 +15,5 @@ pydantic[email]==2.11.0a2
 telethon==1.40.0
 pytest-asyncio==0.26.0
 openai==1.77.0
+aiosqlite==0.21.0
+pytest-asyncio==0.26.0
