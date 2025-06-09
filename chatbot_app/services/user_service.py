@@ -79,3 +79,7 @@ def authenticate_user(db: Session, email: str, password: str) -> User:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User with this email not found",
         )
+
+
+def get_user_by_email(db: Session, email: str) -> User:
+    return db.query(user_model).filter(user_model.email == email).first()

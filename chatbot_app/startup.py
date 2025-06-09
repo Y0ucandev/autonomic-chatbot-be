@@ -25,5 +25,6 @@ API_HASH = get_env_variable("API_HASH")
 SESSION_STRING = get_env_variable("SESSION_STRING")
 PHONE_NUMBER = get_env_variable("PHONE_NUMBER")
 AI_API_KEY = get_env_variable("AI_API_KEY")
+OPERATOR_CHAT_ID = get_env_variable("OPERATOR_CHAT_ID")
 
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)

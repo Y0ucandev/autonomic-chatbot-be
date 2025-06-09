@@ -25,15 +25,3 @@ services:
     restart: always
     env_file:
       - .env.dev
-
-  telegram-listener:
-    build: .
-    container_name: telegram_listener
-    command: ["python", "chatbot_app/telegram_listener.py"]
-    environment:
-      - PYTHONPATH=/app
-    env_file:
-      - .env.dev
-    depends_on:
-      - app
-    restart: always

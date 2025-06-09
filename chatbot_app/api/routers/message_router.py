@@ -1,7 +1,14 @@
-from fastapi import APIRouter, Query
-from chatbot_app.schemas.message_schema import MessageHistoryResponse
-from chatbot_app.services.message_service import fetch_message_history
+from fastapi import APIRouter, Query, HTTPException
+from chatbot_app.schemas.message_schema import MessageHistoryResponse, MessageIn
+from chatbot_app.services.message_service import (
+    fetch_message_history,
+    generate_ai_response,
+    extract_direction_and_user_id,
+)
+from chatbot_app.startup import client, OPERATOR_CHAT_ID
+import logging
 
+logger = logging.getLogger(__name__)
 message_router = APIRouter()
 
 
@@ -11,6 +18,57 @@ async def get_message_history(
     limit: int = Query(default=20, ge=1, le=100),
     offset_id: int = Query(default=0),
 ):
-    return await fetch_message_history(
-        user_id=user_id, limit=limit, offset_id=offset_id
+    TELEGRAM_CHAT_ID = int(OPERATOR_CHAT_ID)
+
+    full_history = await fetch_message_history(
+        chat_id=TELEGRAM_CHAT_ID, limit=limit, offset_id=offset_id
     )
+
+    filtered_messages = []
+    for msg in full_history.messages:
+        if not msg.text:
+            continue
+
+        extracted = extract_direction_and_user_id(msg.text)
+        if not extracted:
+            continue
+
+        direction, extracted_id = extracted
+
+        if extracted_id == str(user_id):
+            clean_text = msg.text.split("]", 1)[1].strip()
+            msg.text = clean_text
+            filtered_messages.append(msg)
+
+    return MessageHistoryResponse(
+        messages=filtered_messages,
+        next_offset_id=full_history.next_offset_id,
+    )
+
+
+@message_router.post("/send-message")
+async def send_message(payload: MessageIn):
+    try:
+        if not client.is_connected():
+            logger.error("Client is not connected")
+            raise HTTPException(status_code=503, detail="Client connection failed")
+
+        full_message = f"[from {payload.user_id}] {payload.message}"
+        await client.send_message(int(OPERATOR_CHAT_ID), full_message)
+
+        response = await generate_ai_response(payload.user_id)
+
+        await client.send_message(int(OPERATOR_CHAT_ID), response)
+        return {"status": "ok"}
+
+    except ValueError as ve:
+        logger.error(f"Value error: {ve}")
+        raise HTTPException(status_code=400, detail=str(ve))
+
+    except ConnectionError as ce:
+        logger.error(f"Connection error: {ce}")
+        raise HTTPException(status_code=503, detail="Client connection failed")
+
+    except Exception:
+        logger.exception("Unexpected error occurred")
+        raise HTTPException(status_code=500, detail="Internal server error")

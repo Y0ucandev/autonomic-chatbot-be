@@ -95,21 +95,6 @@ def test_protected_route_with_expired_token(mock_create_token, client):
     assert response.json()["detail"] == "Token expired"
 
 
-def test_refresh_with_expired_token(client):
-    expired_payload = {
-        "sub": "test@example.com",
-        "email": "test@example.com",
-        "role": "user",
-        "exp": datetime.now(timezone.utc) - timedelta(seconds=1),
-    }
-    expired_token = jwt.encode(expired_payload, SECRET_KEY, algorithm=ALGORITHM)
-    response = client.post(
-        "/users/refresh_token", headers={"Authorization": f"Bearer {expired_token}"}
-    )
-    assert response.status_code == 200
-    assert "access_token" in response.json()
-
-
 def create_test_user(db):
     clear_users(db)
     user_data = UserRegister(
@@ -123,6 +108,22 @@ def create_test_user(db):
     db_user = create_user(db=db, user_data=user_data, role="user")
 
     return db_user
+
+
+def test_refresh_with_expired_token(client, test_db):
+    create_test_user(test_db)
+    expired_payload = {
+        "sub": "testuser@example.com",
+        "email": "testuser@example.com",
+        "role": "user",
+        "exp": datetime.now(timezone.utc) - timedelta(seconds=1),
+    }
+    expired_token = jwt.encode(expired_payload, SECRET_KEY, algorithm=ALGORITHM)
+    response = client.post(
+        "/users/refresh_token", headers={"Authorization": f"Bearer {expired_token}"}
+    )
+    assert response.status_code == 200
+    assert "access_token" in response.json()
 
 
 def test_login_success(client, test_db):
