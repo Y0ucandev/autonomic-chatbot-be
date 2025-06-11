@@ -8,6 +8,7 @@ from chatbot_app.services.user_service import (
     create_access_token,
     get_current_user,
     authenticate_user,
+    get_user_by_email,
 )
 from chatbot_app.schemas.users_schema import (
     Token,
@@ -36,7 +37,7 @@ def get_db() -> Session:
 def get_token() -> Token:
     user_data = {"sub": "test@example.com", "email": "test@example.com", "role": "user"}
     token = create_access_token(user_data)
-    return {"access_token": token, "token_type": "bearer"}
+    return {"access_token": token, "token_type": "bearer", "user_id": 123}
 
 
 @user_router.get("/protected")
@@ -45,7 +46,7 @@ def protected_route(user: User = Depends(get_current_user)) -> Dict[str, str]:
 
 
 @user_router.post("/refresh_token")
-def refresh_token(request: Request) -> Token:
+def refresh_token(request: Request, db: Session = Depends(get_db)) -> Token:
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(
@@ -71,11 +72,22 @@ def refresh_token(request: Request) -> Token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
         )
+    user_email = payload.get("email") or payload.get("sub")
+    if not user_email:
+        raise HTTPException(status_code=400, detail="Invalid token payload")
+
+    user = get_user_by_email(db, user_email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
     user_data = {"sub": payload["sub"], "role": payload["role"]}
     new_access_token = create_access_token(user_data)
 
-    return {"access_token": new_access_token, "token_type": "bearer"}
+    return {
+        "access_token": new_access_token,
+        "token_type": "bearer",
+        "user_id": user.id,
+    }
 
 
 @user_router.post("/login")
@@ -90,7 +102,12 @@ def login(login_request: LoginRequest, db: Session = Depends(get_db)) -> Token:
             "name": auth_result.name,
         }
     )
-    return {"access_token": access_token, "token_type": "bearer", "status": "success"}
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "status": "success",
+        "user_id": auth_result.id,
+    }
 
 
 @user_router.post("/register")

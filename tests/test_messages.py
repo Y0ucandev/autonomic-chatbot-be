@@ -1,17 +1,34 @@
 import pytest
+from fastapi import status, HTTPException
 from unittest.mock import patch, MagicMock, AsyncMock
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from httpx import AsyncClient, ASGITransport
 from chatbot_app.main import app
-from chatbot_app.telegram_listener import handle_new_message
 from collections.abc import AsyncIterator
-from types import SimpleNamespace
 from chatbot_app.services.message_service import (
-    create_private_channel,
-    delete_channel_if_inactive,
-    channels_last_message,
-    anon_channels_metadata,
+    extract_direction_and_user_id,
+    convert_to_openai_messages,
+    generate_ai_response,
 )
+from chatbot_app.schemas.message_schema import TelegramMessage
+from chatbot_app.api.routers.message_router import client, OPERATOR_CHAT_ID
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("[from 12345] Hello!", ("from", "12345")),
+        ("[to 98765] How are you?", ("to", "98765")),
+        ("   [from 111]Hi", ("from", "111")),
+        ("[to 00000]   Message", ("to", "00000")),
+        ("No brackets here", None),
+        ("[from ]", None),
+        ("[from abc] message", None),
+        ("[12345 from] test", None),
+    ],
+)
+def test_extract_direction_and_user_id(text, expected):
+    assert extract_direction_and_user_id(text) == expected
 
 
 class FakeAsyncIterator(AsyncIterator):
@@ -30,40 +47,34 @@ class FakeAsyncIterator(AsyncIterator):
 
 @pytest.mark.asyncio
 async def test_get_history_success():
-    mock_message = MagicMock()
-    mock_message.id = 111
-    mock_message.message = "Hello"
-    mock_message.sender_id = 123456
-    mock_message.chat_id = 654321
-    mock_message.date = datetime.now(timezone.utc)
-    mock_message.photo = None
+    mock_message = TelegramMessage(
+        id=111,
+        sender_id=123456,
+        chat_id=654321,
+        text="[to 123456] Hello",
+        media_path=None,
+        date=datetime.now(timezone.utc),
+        user_id=None,
+    )
 
-    async def fake_iter_messages(*args, **kwargs):
-        yield mock_message
+    mock_full_history = MagicMock()
+    mock_full_history.messages = [mock_message]
+    mock_full_history.next_offset_id = 111
 
     with patch(
-        "chatbot_app.services.message_service.client.iter_messages",
-        new=fake_iter_messages,
-    ), patch(
-        "chatbot_app.services.message_service.client.is_connected", return_value=True
-    ), patch(
-        "chatbot_app.services.message_service.client.connect", new_callable=AsyncMock
-    ), patch(
-        "chatbot_app.services.message_service.client.get_entity",
-        new_callable=AsyncMock,
+        "chatbot_app.api.routers.message_router.fetch_message_history",
+        new=AsyncMock(return_value=mock_full_history),
     ):
-
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             response = await ac.get("/message/history?user_id=123456&limit=1")
 
-        assert response.status_code == 200
+        assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert "messages" in data
         assert isinstance(data["messages"], list)
         assert data["messages"][0]["text"] == "Hello"
         assert data["messages"][0]["sender_id"] == 123456
-        assert "next_offset_id" in data
         assert data["next_offset_id"] == 111
 
 
@@ -110,112 +121,196 @@ async def test_get_history_exception_during_fetch():
         assert "An error occurred while retrieving messages" in response.text
 
 
+def test_convert_to_openai_messages():
+    system_prompt = "You are a helpful assistant."
+
+    messages = [
+        TelegramMessage(
+            id=1,
+            sender_id=123,
+            chat_id=456,
+            text="[from 123] Hello",
+            media_path=None,
+            date=datetime.now(timezone.utc),
+        ),
+        TelegramMessage(
+            id=2,
+            sender_id=123,
+            chat_id=456,
+            text="[to 123] Hi there!",
+            media_path=None,
+            date=datetime.now(timezone.utc),
+        ),
+        TelegramMessage(
+            id=3,
+            sender_id=123,
+            chat_id=456,
+            text="Invalid message format",
+            media_path=None,
+            date=datetime.now(timezone.utc),
+        ),
+        TelegramMessage(
+            id=4,
+            sender_id=123,
+            chat_id=456,
+            text=None,
+            media_path=None,
+            date=datetime.now(timezone.utc),
+        ),
+    ]
+
+    expected = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
+    ]
+
+    result = convert_to_openai_messages(messages, system_prompt)
+    assert result == expected
+
+
 @pytest.mark.asyncio
-async def test_create_private_channel_success():
-    mock_channel = AsyncMock()
-    mock_channel.id = 12345
-
-    mock_result = AsyncMock()
-    mock_result.chats = [mock_channel]
-
-    with patch(
-        "chatbot_app.services.message_service.client", new_callable=AsyncMock
-    ) as mock_client, patch(
-        "chatbot_app.services.message_service.CreateChannelRequest"
-    ) as mock_request:
-
-        mock_client.return_value = mock_result
-
-        result = await create_private_channel("TestChannel", "Desc")
-
-        assert result.id == 12345
-        mock_request.assert_called_once_with(
-            title="TestChannel", about="Desc", megagroup=False
-        )
-
-
-@pytest.mark.asyncio
-async def test_handle_new_message_creates_anon_channel_and_replies():
-    mock_event = AsyncMock()
-    mock_msg = AsyncMock()
-    mock_msg.id = 1
-    mock_msg.sender_id = None
-    mock_msg.chat_id = 0
-    mock_msg.message = "Hello from anon"
-    mock_msg.date = "2025-05-29"
-    mock_event.message = mock_msg
-    mock_event.sender_id = None
-    mock_client = AsyncMock()
-
-    mock_client.iter_messages = lambda *args, **kwargs: FakeAsyncIterator(
-        [
-            SimpleNamespace(
-                id=1,
-                message="hi",
-                sender_id=123,
-                chat_id=456,
-                date="2025-05-29",
-                photo=None,
-            )
-        ]
+async def test_generate_ai_response_success():
+    mock_message = TelegramMessage(
+        id=1,
+        sender_id=123,
+        chat_id=456,
+        text="[from 789] Hello",
+        media_path=None,
+        date=datetime.now(timezone.utc),
+        user_id=None,
     )
 
-    mock_client.is_connected = lambda: True
-    mock_client.connect = AsyncMock()
+    mock_history = MagicMock()
+    mock_history.messages = [mock_message]
+    mock_history.next_offset_id = 1
+
+    mock_ai_response = MagicMock()
+    mock_ai_response.choices = [MagicMock(message=MagicMock(content="Hi there!"))]
 
     with patch(
-        "chatbot_app.telegram_listener.create_private_channel", new_callable=AsyncMock
-    ) as mock_create_channel, patch(
-        "chatbot_app.telegram_listener.generate_anon_id", return_value="anon-uuid"
+        "chatbot_app.services.message_service.connect_client", new=AsyncMock()
     ), patch(
-        "chatbot_app.telegram_listener.generate_ai_response", return_value="AI reply"
+        "chatbot_app.services.message_service.fetch_message_history",
+        new=AsyncMock(return_value=mock_history),
     ), patch(
-        "chatbot_app.services.message_service.client", mock_client
+        "chatbot_app.services.message_service.client_ai.chat.completions.create",
+        new=AsyncMock(return_value=mock_ai_response),
     ), patch(
-        "chatbot_app.telegram_listener.client.get_me", new_callable=AsyncMock
-    ) as mock_get_me, patch(
-        "chatbot_app.telegram_listener.client.send_message", new_callable=AsyncMock
-    ) as mock_send_message:
+        "chatbot_app.services.message_service.main_prompt", "You are helpful."
+    ):
+        result = await generate_ai_response(app_user_id=789)
 
-        mock_channel = AsyncMock()
-        mock_channel.id = 77777
-        mock_create_channel.return_value = mock_channel
-        mock_get_me.return_value.id = 123456
-
-        await handle_new_message(mock_event)
-
-        mock_create_channel.assert_called_once_with(
-            "AnonUser-anon-uuid", "Channel for anonymous user"
-        )
-        assert mock_send_message.call_count == 2
-        mock_send_message.assert_any_call(
-            mock_channel.id, "Anonymous user: Hello from anon"
-        )
-        mock_send_message.assert_any_call(mock_channel.id, "AI reply")
+        assert result == "[to 789] Hi there!"
 
 
 @pytest.mark.asyncio
-async def test_delete_channel_if_inactive_deletes_after_timeout():
-    mock_client = AsyncMock()
-    channel_id = 12345
-
-    channels_last_message[channel_id] = datetime.now(timezone.utc) - timedelta(
-        minutes=2
+async def test_generate_ai_response_failure():
+    mock_message = TelegramMessage(
+        id=1,
+        sender_id=123,
+        chat_id=456,
+        text="[from 789] Hello",
+        media_path=None,
+        date=datetime.now(timezone.utc),
+        user_id=None,
     )
-    anon_channels_metadata["anon123"] = {
-        "channel_id": channel_id,
-        "last_active": datetime.now(timezone.utc) - timedelta(minutes=2),
-    }
+
+    mock_history = MagicMock()
+    mock_history.messages = [mock_message]
 
     with patch(
-        "chatbot_app.services.message_service.DeleteChannelRequest"
-    ) as mock_delete_req:
-        mock_delete_req.return_value = f"delete-{channel_id}"
+        "chatbot_app.services.message_service.connect_client", new=AsyncMock()
+    ), patch(
+        "chatbot_app.services.message_service.fetch_message_history",
+        new=AsyncMock(return_value=mock_history),
+    ), patch(
+        "chatbot_app.services.message_service.client_ai.chat.completions.create",
+        new=AsyncMock(side_effect=Exception("Connection error")),
+    ), patch(
+        "chatbot_app.services.message_service.main_prompt", "You are helpful."
+    ):
 
-        await delete_channel_if_inactive(
-            mock_client, channel_id, timeout_minutes=1, check_interval_seconds=0.1
-        )
+        with pytest.raises(HTTPException) as exc_info:
+            await generate_ai_response(app_user_id=789)
 
-        mock_client.assert_awaited_with(mock_delete_req(channel_id))
-        assert channel_id not in channels_last_message
-        assert "anon123" not in anon_channels_metadata
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "AI response generation failed"
+
+
+@pytest.mark.asyncio
+async def test_send_message_success():
+    payload = {"user_id": "123", "message": "Hello"}
+
+    with patch.object(client, "is_connected", return_value=True), patch.object(
+        client, "send_message", new=AsyncMock()
+    ) as mock_send_message, patch(
+        "chatbot_app.api.routers.message_router.generate_ai_response",
+        new=AsyncMock(return_value="[to 123] AI response"),
+    ):
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.post("/message/send-message", json=payload)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"status": "ok"}
+        mock_send_message.assert_any_call(int(OPERATOR_CHAT_ID), "[from 123] Hello")
+        mock_send_message.assert_any_call(int(OPERATOR_CHAT_ID), "[to 123] AI response")
+
+
+@pytest.mark.asyncio
+async def test_send_message_value_error():
+    payload = {"user_id": "123", "message": "Hello"}
+
+    with patch.object(client, "is_connected", return_value=True), patch.object(
+        client, "send_message", new=AsyncMock()
+    ), patch(
+        "chatbot_app.api.routers.message_router.generate_ai_response",
+        new=AsyncMock(side_effect=ValueError("Invalid user_id")),
+    ):
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.post("/message/send-message", json=payload)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["detail"] == "Invalid user_id"
+
+
+@pytest.mark.asyncio
+async def test_send_message_connection_error():
+    payload = {"user_id": "123", "message": "Hello"}
+
+    with patch.object(client, "is_connected", return_value=True), patch.object(
+        client, "send_message", new=AsyncMock()
+    ), patch(
+        "chatbot_app.api.routers.message_router.generate_ai_response",
+        new=AsyncMock(side_effect=ConnectionError("Connection lost")),
+    ):
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.post("/message/send-message", json=payload)
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["detail"] == "Client connection failed"
+
+
+@pytest.mark.asyncio
+async def test_send_message_unexpected_error():
+    payload = {"user_id": "123", "message": "Hello"}
+
+    with patch.object(client, "is_connected", return_value=True), patch.object(
+        client, "send_message", new=AsyncMock()
+    ), patch(
+        "chatbot_app.api.routers.message_router.generate_ai_response",
+        new=AsyncMock(side_effect=Exception("Boom")),
+    ):
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.post("/message/send-message", json=payload)
+
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert response.json()["detail"] == "Internal server error"

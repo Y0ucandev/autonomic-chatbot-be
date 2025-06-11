@@ -7,6 +7,7 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     status: Optional[str] = None
+    user_id: int
     model_config = ConfigDict(extra="forbid")
 
 

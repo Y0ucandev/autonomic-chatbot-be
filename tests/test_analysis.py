@@ -1,20 +1,23 @@
 import pytest
+import pytest_asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from chatbot_app.main import app
 from chatbot_app.db.models import Base, User
 from chatbot_app.api.routers.analysis_router import get_db
 from chatbot_app.services.analysis_service import analyze_sentiment
-
+from httpx._transports.asgi import ASGITransport
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
 )
-SessionTesting = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+SessionTesting = sessionmaker(
+    bind=engine, autocommit=False, autoflush=False, expire_on_commit=False
+)
 
 
 @pytest.fixture(scope="function")
@@ -33,15 +36,18 @@ def session(test_db):
         db.close()
 
 
-@pytest.fixture
-def client(session):
+@pytest_asyncio.fixture
+async def test_client(session):
     def override_get_db():
         yield session
 
     app.dependency_overrides[get_db] = override_get_db
 
-    with TestClient(app) as c:
-        yield c
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -61,7 +67,8 @@ def test_user(session):
     return user
 
 
-def test_sentiment_post_and_get(client, test_user):
+@pytest.mark.asyncio
+async def test_sentiment_post_and_get(test_client, test_user):
     with patch(
         "chatbot_app.api.routers.analysis_router.analyze_sentiment",
         new_callable=AsyncMock,
@@ -81,10 +88,10 @@ def test_sentiment_post_and_get(client, test_user):
             "user_id": test_user.id,
         }
 
-        response = client.post("/analysis/sentiment", json=payload)
+        response = await test_client.post("/analysis/sentiment", json=payload)
         assert response.status_code == 200
 
-        get_response = client.get("/analysis/sentiment/conv-combined-123")
+        get_response = await test_client.get("/analysis/sentiment/conv-combined-123")
         assert get_response.status_code == 200
         data = get_response.json()
 
@@ -97,20 +104,22 @@ def test_sentiment_post_and_get(client, test_user):
         assert first_record["end_state"] == 6
 
 
-def test_post_sentiment_too_few_messages(client, test_user):
+@pytest.mark.asyncio
+async def test_post_sentiment_too_few_messages(test_client, test_user):
     payload = {
         "conversation_id": "conv-too-short",
         "messages": ["Too short.", "Only two."],
         "user_id": test_user.id,
     }
 
-    response = client.post("/analysis/sentiment", json=payload)
+    response = await test_client.post("/analysis/sentiment", json=payload)
     assert response.status_code == 400
     assert "At least 3 messages are needed" in response.text
 
 
-def test_get_sentiment_not_found(client):
-    response = client.get("/analysis/sentiment/non-existent-conv")
+@pytest.mark.asyncio
+async def test_get_sentiment_not_found(test_client):
+    response = await test_client.get("/analysis/sentiment/non-existent-conv")
     assert response.status_code == 404
     assert "Conversation not found" in response.text
 

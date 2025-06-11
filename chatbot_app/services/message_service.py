@@ -1,13 +1,11 @@
 import openai
-import uuid
+import re
 from chatbot_app.startup import AI_API_KEY
 import logging
 import asyncio
 from fastapi import HTTPException
 from chatbot_app.schemas.message_schema import TelegramMessage, MessageHistoryResponse
-from chatbot_app.startup import client
-from telethon.tl.functions.channels import CreateChannelRequest, DeleteChannelRequest
-from datetime import datetime, timedelta, timezone
+from chatbot_app.startup import client, OPERATOR_CHAT_ID
 
 logger = logging.getLogger(__name__)
 client_ai = openai.AsyncOpenAI(api_key=AI_API_KEY)
@@ -61,14 +59,20 @@ async def connect_client(retries=3, delay=1):
         raise HTTPException(status_code=500, detail="Failed to connect to Telegram")
 
 
+def extract_direction_and_user_id(text: str) -> tuple[str, str] | None:
+    text = text.strip()
+    match = re.match(r"\[(from|to) (\d+)\]", text)
+    return (match.group(1), match.group(2)) if match else None
+
+
 async def fetch_message_history(
-    user_id: int, limit: int, offset_id: int
+    chat_id: int, limit: int, offset_id: int
 ) -> MessageHistoryResponse:
     await connect_client()
     messages = []
 
     try:
-        entity = await client.get_entity(user_id)
+        entity = await client.get_entity(chat_id)
 
         async for msg in client.iter_messages(
             entity=entity, limit=limit, offset_id=offset_id
@@ -94,9 +98,9 @@ async def fetch_message_history(
             else:
                 continue
 
-            messages.append(message.model_dump())
+            messages.append(message)
 
-        next_offset_id = messages[-1]["id"] if messages else offset_id
+        next_offset_id = messages[-1].id if messages else None
 
     except Exception:
         logger.error("Error while fetching messages", exc_info=True)
@@ -108,71 +112,54 @@ async def fetch_message_history(
     return MessageHistoryResponse(messages=messages, next_offset_id=next_offset_id)
 
 
-def convert_to_openai_messages(
-    messages: list[TelegramMessage], bot_id: int, system_prompt: str
-):
+def convert_to_openai_messages(messages: list[TelegramMessage], system_prompt: str):
     history = [{"role": "system", "content": system_prompt}]
 
     for msg in messages:
-        role = "assistant" if msg.sender_id == bot_id else "user"
+        if not msg.text:
+            continue
 
-        if msg.media_path:
-            content = f"[Image at {msg.media_path}]"
-        else:
-            content = msg.text or ""
+        match = re.match(r"\[(from|to) (\d+)\]", msg.text)
+        if not match:
+            continue
+
+        direction, user_id = match.groups()
+
+        role = "user" if direction == "from" else "assistant"
+
+        content = msg.text.split("]", 1)[1].strip()
 
         history.append({"role": role, "content": content})
-
     return history
 
 
-async def generate_ai_response(
-    chat_id, bot_id, limit: int = 20, offset_id: int = 0
-) -> str:
+async def generate_ai_response(app_user_id, limit: int = 20, offset_id: int = 0) -> str:
     await connect_client()
+    TELEGRAM_CHAT_ID = int(OPERATOR_CHAT_ID)
     messages = await fetch_message_history(
-        user_id=chat_id, limit=limit, offset_id=offset_id
+        chat_id=TELEGRAM_CHAT_ID, limit=limit, offset_id=offset_id
     )
-    history_data = messages.messages
-    openai_messages = convert_to_openai_messages(history_data, bot_id, main_prompt)
-    response = await client_ai.chat.completions.create(
-        model="gpt-4-turbo", messages=openai_messages
-    )
-    return response.choices[0].message.content.strip()
+    filtered = []
+    for msg in messages.messages:
+        if not msg.text:
+            continue
 
+        extracted = extract_direction_and_user_id(msg.text)
+        if not extracted:
+            continue
 
-async def create_private_channel(title: str, about: str = ""):
-    result = await client(
-        CreateChannelRequest(title=title, about=about, megagroup=False)
-    )
-    return result.chats[0]
+        direction, uid = extracted
+        if uid == str(app_user_id) and direction in ("from", "to"):
+            filtered.append(msg)
 
+    openai_messages = convert_to_openai_messages(filtered, main_prompt)
 
-def generate_anon_id():
-    return str(uuid.uuid4())
-
-
-async def delete_channel_if_inactive(
-    client, channel_id, timeout_minutes=1440, check_interval_seconds=3600
-):
-    while True:
-        await asyncio.sleep(check_interval_seconds)
-        last_message_time = channels_last_message.get(channel_id)
-
-        if last_message_time:
-            now = datetime.now(timezone.utc)
-            if now - last_message_time > timedelta(minutes=timeout_minutes):
-                try:
-                    await client(DeleteChannelRequest(channel_id))
-                    logger.info(f"Deleted inactive channel {channel_id} after timeout")
-                    channels_last_message.pop(channel_id, None)
-                    for anon_id, meta in list(anon_channels_metadata.items()):
-                        if meta["channel_id"] == channel_id:
-                            anon_channels_metadata.pop(anon_id, None)
-                            break
-                    break
-                except Exception as e:
-                    logger.error(f"Failed to delete channel {channel_id}: {e}")
-                    break
-        else:
-            break
+    try:
+        response = await client_ai.chat.completions.create(
+            model="gpt-4-turbo", messages=openai_messages
+        )
+        ai_message = response.choices[0].message.content.strip()
+        return f"[to {app_user_id}] {ai_message}"
+    except Exception:
+        logger.exception("AI response generation failed")
+        raise HTTPException(status_code=500, detail="AI response generation failed")
