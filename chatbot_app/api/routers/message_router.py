@@ -1,15 +1,27 @@
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Depends
 from chatbot_app.schemas.message_schema import MessageHistoryResponse, MessageIn
 from chatbot_app.services.message_service import (
     fetch_message_history,
     generate_ai_response,
     extract_direction_and_user_id,
+    add_user_facts,
 )
 from chatbot_app.startup import client, OPERATOR_CHAT_ID
+from sqlalchemy.orm import Session
+from chatbot_app.db.database import SessionLocal
 import logging
+from chatbot_app.db.models import FactRecord, User
 
 logger = logging.getLogger(__name__)
 message_router = APIRouter()
+
+
+def get_db() -> Session:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @message_router.get("/history", response_model=MessageHistoryResponse)
@@ -47,11 +59,24 @@ async def get_message_history(
 
 
 @message_router.post("/send-message")
-async def send_message(payload: MessageIn):
+async def send_message(payload: MessageIn, db: Session = Depends(get_db)):
     try:
         if not client.is_connected():
             logger.error("Client is not connected")
             raise HTTPException(status_code=503, detail="Client connection failed")
+
+        existing_user = db.query(User).filter_by(id=payload.user_id).first()
+        if not existing_user:
+            fake_email = f"anonim_{payload.user_id}@notrealemail.local"
+            db.add(
+                User(
+                    id=payload.user_id,
+                    email=fake_email,
+                    name="Anonim User",
+                    gender="other",
+                )
+            )
+            db.commit()
 
         full_message = f"[from {payload.user_id}] {payload.message}"
         await client.send_message(int(OPERATOR_CHAT_ID), full_message)
@@ -59,6 +84,8 @@ async def send_message(payload: MessageIn):
         response = await generate_ai_response(payload.user_id)
 
         await client.send_message(int(OPERATOR_CHAT_ID), response)
+        await add_user_facts(payload.user_id, payload.message, db)
+        db.commit()
         return {"status": "ok"}
 
     except ValueError as ve:
@@ -72,3 +99,16 @@ async def send_message(payload: MessageIn):
     except Exception:
         logger.exception("Unexpected error occurred")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@message_router.get("/user-facts/{user_id}")
+async def get_user_facts(user_id: int, db: Session = Depends(get_db)):
+    try:
+        facts = db.query(FactRecord).filter_by(user_id=user_id).all()
+    except Exception:
+        raise HTTPException(status_code=500, detail="Database query failed")
+
+    if not facts:
+        return []
+
+    return [fact.user_fact for fact in facts]
