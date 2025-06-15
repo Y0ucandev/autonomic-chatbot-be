@@ -314,3 +314,81 @@ async def test_send_message_unexpected_error():
 
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert response.json()["detail"] == "Internal server error"
+
+
+@pytest.mark.asyncio
+async def test_search_messages_success():
+    user_id = 123456
+    query = "hello"
+
+    mock_message = TelegramMessage(
+        id=111,
+        sender_id=user_id,
+        chat_id=654321,
+        text=f"[from {user_id}] Hello world!",
+        media_path=None,
+        date=datetime.now(timezone.utc),
+        user_id=None,
+    )
+
+    mock_full_history = MagicMock()
+    mock_full_history.messages = [mock_message]
+    mock_full_history.next_offset_id = 111
+
+    with patch(
+        "chatbot_app.api.routers.message_router.fetch_message_history",
+        new=AsyncMock(return_value=mock_full_history),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.get(
+                f"/message/search?user_id={user_id}&query={query}&limit=1"
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "messages" in data
+        assert isinstance(data["messages"], list)
+        assert len(data["messages"]) == 1
+        assert query.lower() in data["messages"][0]["text"].lower()
+        assert data["next_offset_id"] == 111
+
+
+@pytest.mark.asyncio
+async def test_search_messages_value_error():
+    user_id = 123456
+    query = "hello"
+
+    with patch(
+        "chatbot_app.api.routers.message_router.fetch_message_history",
+        new=AsyncMock(side_effect=ValueError("Invalid user ID format")),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.get(
+                f"/message/search?user_id={user_id}&query={query}&limit=1"
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Invalid user ID format"
+
+
+@pytest.mark.asyncio
+async def test_search_messages_unexpected_error():
+    user_id = 123456
+    query = "hello"
+
+    with patch(
+        "chatbot_app.api.routers.message_router.fetch_message_history",
+        new=AsyncMock(side_effect=Exception("Something went wrong")),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.get(
+                f"/message/search?user_id={user_id}&query={query}&limit=1"
+            )
+
+        assert response.status_code == 500
+        assert (
+            response.json()["detail"] == "Internal server error during message search."
+        )
