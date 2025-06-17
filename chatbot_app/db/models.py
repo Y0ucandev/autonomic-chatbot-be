@@ -13,7 +13,7 @@ class SexEnum(str, Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     sub = Column(String, unique=True, nullable=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String)
@@ -27,6 +27,10 @@ class User(Base):
         "SentimentRecord", back_populates="user", cascade="all, delete-orphan"
     )
 
+    facts = relationship(
+        "FactRecord", back_populates="user", cascade="all, delete-orphan"
+    )
+
 
 class SentimentRecord(Base):
     __tablename__ = "sentiments"
@@ -38,3 +42,13 @@ class SentimentRecord(Base):
 
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     user = relationship("User", back_populates="sentiments")
+
+
+class FactRecord(Base):
+    __tablename__ = "facts"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_fact = Column(String, nullable=False)
+
+    user = relationship("User", back_populates="facts")

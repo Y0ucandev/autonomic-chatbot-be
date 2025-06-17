@@ -9,9 +9,56 @@ from chatbot_app.services.message_service import (
     extract_direction_and_user_id,
     convert_to_openai_messages,
     generate_ai_response,
+    add_user_facts,
 )
 from chatbot_app.schemas.message_schema import TelegramMessage
 from chatbot_app.api.routers.message_router import client, OPERATOR_CHAT_ID
+from chatbot_app.db.models import FactRecord
+import pytest_asyncio
+from chatbot_app.db.models import Base
+from chatbot_app.api.routers.message_router import get_db
+
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+SessionTesting = sessionmaker(
+    bind=engine, autocommit=False, autoflush=False, expire_on_commit=False
+)
+
+
+@pytest.fixture(scope="function")
+def test_db():
+    Base.metadata.create_all(bind=engine)
+    yield
+    Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture
+def session(test_db):
+    db = SessionTesting()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest_asyncio.fixture
+async def test_client(session):
+    def override_get_db():
+        yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+    app.dependency_overrides.clear()
 
 
 @pytest.mark.parametrize(
@@ -316,6 +363,7 @@ async def test_send_message_unexpected_error():
         assert response.json()["detail"] == "Internal server error"
 
 
+
 @pytest.mark.asyncio
 async def test_search_messages_success():
     user_id = 123456
@@ -392,3 +440,54 @@ async def test_search_messages_unexpected_error():
         assert (
             response.json()["detail"] == "Internal server error during message search."
         )
+
+@patch(
+    "chatbot_app.services.message_service.client_ai.chat.completions.create",
+    new_callable=AsyncMock,
+)
+@pytest.mark.asyncio
+async def test_add_user_facts_success(mock_create, session):
+    mock_create.return_value.choices = [
+        MagicMock(
+            message=MagicMock(content="I live in Berlin.\nI work as a developer.")
+        )
+    ]
+
+    await add_user_facts(user_id=1, user_message="I live in Berlin", db=session)
+
+    facts = session.query(FactRecord).all()
+    assert len(facts) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_user_facts(test_client: AsyncClient, session):
+    user_id = 123
+    facts_texts = ["Fact one", "Fact two"]
+    for fact_text in facts_texts:
+        session.add(FactRecord(user_id=user_id, user_fact=fact_text))
+    session.commit()
+    response = await test_client.get(f"/message/user-facts/{user_id}")
+
+    assert response.status_code == 200
+    json_data = response.json()
+    assert isinstance(json_data, list)
+    assert set(json_data) == set(facts_texts)
+
+
+@pytest.mark.asyncio
+async def test_get_user_facts_db_error(monkeypatch, test_client):
+    mock_db = MagicMock()
+    mock_db.query.side_effect = Exception("DB error")
+
+    async def override_get_db():
+        yield mock_db
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    user_id = 123
+    response = await test_client.get(f"message/user-facts/{user_id}")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Database query failed"}
+
+    app.dependency_overrides.clear()

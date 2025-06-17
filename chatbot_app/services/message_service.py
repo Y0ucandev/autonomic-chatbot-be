@@ -6,6 +6,9 @@ import asyncio
 from fastapi import HTTPException
 from chatbot_app.schemas.message_schema import TelegramMessage, MessageHistoryResponse
 from chatbot_app.startup import client, OPERATOR_CHAT_ID
+from chatbot_app.db.models import FactRecord
+from chatbot_app.db.database import SessionLocal
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 client_ai = openai.AsyncOpenAI(api_key=AI_API_KEY)
@@ -43,6 +46,28 @@ If someone expresses thoughts of self-harm or suicide:
 • Acknowledge their pain without judgment
 • Encourage them—gently and urgently—to reach out to a crisis hotline, emergency service, or a trusted adult/professional
 • Stay emotionally present and kind. Your compassion can provide hope and stability in a moment of crisis
+"""
+
+facts_prompt = """
+Your task is to extract specific facts about the user from their message.
+
+Return a bullet-point list, with one fact per line, each starting with a hyphen (e.g., "-"). Each fact should be as short, concrete, and self-contained as possible (e.g., "Lives in Warsaw", "Is 28 years old", "Enjoys playing chess").
+
+If the message does not contain any meaningful facts about the user (e.g., it’s just a joke, question, or general statement), respond with exactly: "No facts".
+
+Example 1:
+User message: "Hi, my name is Kate and I'm an English teacher living in Krakow."
+Response:
+- Name is Kate
+- Is an English teacher
+- Lives in Krakow
+
+Example 2:
+User message: "Haha, that's a good one! 😂"
+Response:
+No facts
+
+Now, analyze the user's message and extract the facts:
 """
 
 channels_last_message = {}
@@ -152,7 +177,29 @@ async def generate_ai_response(app_user_id, limit: int = 20, offset_id: int = 0)
         if uid == str(app_user_id) and direction in ("from", "to"):
             filtered.append(msg)
 
-    openai_messages = convert_to_openai_messages(filtered, main_prompt)
+    user_facts = []
+    db: Session = SessionLocal()
+    try:
+        fact_records = (
+            db.query(FactRecord).filter(FactRecord.user_id == app_user_id).all()
+        )
+        user_facts = [f.user_fact for f in fact_records]
+    finally:
+        db.close()
+
+    facts_string = (
+        "\n".join(f"- {fact}" for fact in user_facts)
+        if user_facts
+        else "No known facts."
+    )
+
+    base_prompt = (
+        main_prompt.strip()
+        + "\n\nHere are known facts about the user:\n"
+        + facts_string
+    )
+
+    openai_messages = convert_to_openai_messages(filtered, base_prompt)
 
     try:
         response = await client_ai.chat.completions.create(
@@ -163,3 +210,33 @@ async def generate_ai_response(app_user_id, limit: int = 20, offset_id: int = 0)
     except Exception:
         logger.exception("AI response generation failed")
         raise HTTPException(status_code=500, detail="AI response generation failed")
+
+
+async def add_user_facts(user_id: int, user_message: str, db: Session):
+    try:
+        prompt = [
+            {"role": "system", "content": facts_prompt},
+            {"role": "user", "content": user_message},
+        ]
+
+        response = await client_ai.chat.completions.create(
+            model="gpt-4-turbo", messages=prompt
+        )
+
+        facts_text = response.choices[0].message.content.strip()
+        if facts_text.lower() == "no facts":
+            return
+
+        facts = [f.strip("- ").strip() for f in facts_text.split("\n") if f.strip()]
+        for fact in facts:
+            db.add(FactRecord(user_id=user_id, user_fact=fact))
+
+        db.commit()
+
+    except Exception:
+        logger.exception("AI fact extraction failed")
+        raise HTTPException(status_code=500, detail="AI fact extraction failed")
+
+
+def shrink_id(telegram_id: int) -> int:
+    return abs(hash(telegram_id)) % 2_000_000_000
