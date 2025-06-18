@@ -100,6 +100,56 @@ async def send_message(payload: MessageIn, db: Session = Depends(get_db)):
         logger.exception("Unexpected error occurred")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+        
+@message_router.get("/search", response_model=MessageHistoryResponse)
+async def search_messages(
+    user_id: int = Query(...),
+    query: str = Query(..., min_length=1),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset_id: int = Query(default=0),
+):
+    try:
+        TELEGRAM_CHAT_ID = int(OPERATOR_CHAT_ID)
+
+        full_history = await fetch_message_history(
+            chat_id=TELEGRAM_CHAT_ID, limit=100, offset_id=offset_id
+        )
+
+        matching_messages = []
+        for msg in full_history.messages:
+            if not msg.text:
+                continue
+
+            extracted = extract_direction_and_user_id(msg.text)
+            if not extracted:
+                continue
+
+            direction, extracted_id = extracted
+            if extracted_id != str(user_id):
+                continue
+
+            clean_text = msg.text.split("]", 1)[1].strip()
+
+            if query.lower() in clean_text.lower():
+                msg.text = clean_text
+                matching_messages.append(msg)
+
+            if len(matching_messages) >= limit:
+                break
+
+        return MessageHistoryResponse(
+            messages=matching_messages, next_offset_id=full_history.next_offset_id
+        )
+
+    except ValueError as e:
+        logger.error(f"Invalid input: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+    except Exception:
+        logger.exception("Unexpected error during search")
+        raise HTTPException(
+            status_code=500, detail="Internal server error during message search."
+        )
 
 @message_router.get("/user-facts/{user_id}")
 async def get_user_facts(user_id: int, db: Session = Depends(get_db)):
@@ -112,3 +162,4 @@ async def get_user_facts(user_id: int, db: Session = Depends(get_db)):
         return []
 
     return [fact.user_fact for fact in facts]
+
