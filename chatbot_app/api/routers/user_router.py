@@ -1,4 +1,5 @@
 import jwt
+import random
 
 from chatbot_app.startup import SECRET_KEY, ALGORITHM
 from fastapi import APIRouter, HTTPException, status, Depends, Request
@@ -125,3 +126,13 @@ def register(user_create: UserRegister, db: Session = Depends(get_db)) -> Respon
 @user_router.get("/me")
 def get_me(current_user: User = Depends(get_current_user)):
     return {"name": current_user.name, "email": current_user.email}
+
+
+@user_router.post("/temporary_user_id")
+def generate_temporary_user_id(db: Session = Depends(get_db)) -> Dict[str, int]:
+    while True:
+        temp_id = random.randint(-2_000_000_000, -1)
+        exists = db.query(Model_User).filter(Model_User.id == temp_id).first()
+        if not exists:
+            break
+    return {"temporary_user_id": temp_id}

@@ -151,6 +151,7 @@ async def search_messages(
             status_code=500, detail="Internal server error during message search."
         )
 
+
 @message_router.get("/user-facts/{user_id}")
 async def get_user_facts(user_id: int, db: Session = Depends(get_db)):
     try:
@@ -162,4 +163,3 @@ async def get_user_facts(user_id: int, db: Session = Depends(get_db)):
         return []
 
     return [fact.user_fact for fact in facts]
-
